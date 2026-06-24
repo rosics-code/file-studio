@@ -1,9 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Image File Studio Pro+</title>
+  <title>Image Studio Pro Plugins</title>
 
-  <!-- PWA -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1a1a22">
   <link rel="manifest" href="manifest.json">
@@ -32,7 +31,6 @@
       align-items: center;
       justify-content: center;
       gap: 10px;
-      background: #0f0f14;
       position: relative;
     }
 
@@ -40,13 +38,6 @@
       max-width: 95%;
       max-height: 80%;
       border-radius: 10px;
-    }
-
-    #toolbar {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      margin-bottom: 10px;
     }
 
     button {
@@ -62,20 +53,7 @@
       background: #3a3a50;
     }
 
-    input {
-      background: #1a1a22;
-      border: 1px solid #333;
-      color: white;
-      padding: 6px;
-      border-radius: 6px;
-      width: 100%;
-      margin-bottom: 8px;
-    }
-
     .file {
-      display: flex;
-      align-items: center;
-      gap: 8px;
       padding: 4px;
       cursor: pointer;
     }
@@ -84,28 +62,15 @@
       background: #2a2a3a;
     }
 
-    .thumb {
-      width: 28px;
-      height: 28px;
-      object-fit: cover;
-      border-radius: 4px;
-    }
-
-    .folder {
-      padding: 4px;
-      cursor: pointer;
-      font-weight: bold;
-    }
-
-    .children {
-      margin-left: 12px;
-      display: none;
-    }
-
-    #dropHint {
+    #pluginPanel {
       position: absolute;
       bottom: 10px;
-      opacity: 0.4;
+      left: 10px;
+      background: #1a1a22;
+      padding: 10px;
+      border-radius: 8px;
+      width: 260px;
+      display: none;
     }
   </style>
 </head>
@@ -114,204 +79,158 @@
 
 <div id="sidebar">
   <button onclick="openFolder()">Open Folder</button>
-  <input id="search" placeholder="Search images..." />
+  <button onclick="togglePlugins()">Plugins 🧩</button>
+  <button onclick="checkUpdate()">Check Update ⚡</button>
+
   <div id="fileList"></div>
 </div>
 
 <div id="viewer">
-
-  <div id="toolbar">
-    <input id="renameBox" placeholder="rename image..." />
-    <button onclick="renameFile()">Rename</button>
-    <button onclick="deleteFile()">Delete</button>
-    <button onclick="undoDelete()">Undo</button>
-    <button onclick="refresh()">Refresh</button>
-  </div>
-
   <img id="img" />
-  <div id="dropHint">Drag & drop images here</div>
-
+  <div id="pluginPanel"></div>
 </div>
 
 <script>
   let dirHandle = null;
   let currentFile = null;
   let currentBlob = null;
-  let currentName = "";
-  let lastDeleted = null;
 
   const fileList = document.getElementById("fileList");
   const img = document.getElementById("img");
-  const renameBox = document.getElementById("renameBox");
-  const search = document.getElementById("search");
+  const pluginPanel = document.getElementById("pluginPanel");
+
+  // =========================
+  // 🧩 PLUGIN SYSTEM CORE
+  // =========================
+
+  const plugins = [];
+
+  const API = {
+    getImage: () => currentBlob,
+    setImage: (url) => img.src = url,
+    log: (msg) => console.log("[PLUGIN]", msg),
+    addButton: (text, fn) => {
+      const btn = document.createElement("button");
+      btn.textContent = text;
+      btn.onclick = fn;
+      pluginPanel.appendChild(btn);
+    }
+  };
+
+  function registerPlugin(plugin) {
+    plugins.push(plugin);
+    plugin.init(API);
+  }
+
+  function togglePlugins() {
+    pluginPanel.style.display =
+      pluginPanel.style.display === "block" ? "none" : "block";
+  }
+
+  // =========================
+  // 📦 EXAMPLE PLUGIN
+  // =========================
+
+  registerPlugin({
+    name: "Grayscale Mode",
+    init(api) {
+      api.addButton("Grayscale 🧠", () => {
+        img.style.filter = "grayscale(100%)";
+      });
+
+      api.addButton("Reset", () => {
+        img.style.filter = "none";
+      });
+    }
+  });
+
+  registerPlugin({
+    name: "Zoom Tool",
+    init(api) {
+      let zoom = 1;
+
+      api.addButton("Zoom +", () => {
+        zoom += 0.1;
+        img.style.transform = `scale(${zoom})`;
+      });
+
+      api.addButton("Zoom -", () => {
+        zoom -= 0.1;
+        img.style.transform = `scale(${zoom})`;
+      });
+    }
+  });
+
+  // =========================
+  // 🌳 FILE SYSTEM
+  // =========================
 
   function isImage(name) {
     return /\.(png|jpg|jpeg|gif|webp|bmp|heic)$/i.test(name);
   }
 
-  // 🌳 FILE TREE
   async function readDir(handle, parent) {
     for await (const entry of handle.values()) {
 
-      if (entry.kind === "directory") {
-        const folder = document.createElement("div");
-        folder.textContent = "📁 " + entry.name;
-        folder.className = "folder";
+      if (entry.kind === "file" && isImage(entry.name)) {
+        const div = document.createElement("div");
+        div.className = "file";
+        div.textContent = "📄 " + entry.name;
 
-        const children = document.createElement("div");
-        children.className = "children";
-
-        folder.onclick = () => {
-          children.style.display =
-            children.style.display === "block" ? "none" : "block";
-        };
-
-        parent.appendChild(folder);
-        parent.appendChild(children);
-
-        await readDir(entry, children);
-      }
-
-      else {
-        if (!isImage(entry.name)) continue;
-
-        const file = document.createElement("div");
-        file.className = "file";
-
-        const f = await entry.getFile();
-
-        const thumb = document.createElement("img");
-        thumb.src = URL.createObjectURL(f);
-        thumb.className = "thumb";
-
-        const label = document.createElement("span");
-        label.textContent = entry.name;
-
-        file.appendChild(thumb);
-        file.appendChild(label);
-
-        file.onclick = async () => {
+        div.onclick = async () => {
           currentFile = entry;
-          currentName = entry.name;
 
-          const fileData = await entry.getFile();
-          currentBlob = fileData;
+          const file = await entry.getFile();
+          currentBlob = file;
 
-          img.src = URL.createObjectURL(fileData);
-          renameBox.value = entry.name.replace(/\.[^.]+$/, "");
+          img.src = URL.createObjectURL(file);
         };
 
-        parent.appendChild(file);
+        parent.appendChild(div);
       }
     }
   }
 
-  // 📁 OPEN
   async function openFolder() {
     dirHandle = await window.showDirectoryPicker();
     fileList.innerHTML = "";
     await readDir(dirHandle, fileList);
   }
 
-  // 🔁 REFRESH
-  async function refresh() {
-    if (!dirHandle) return;
-    fileList.innerHTML = "";
-    await readDir(dirHandle, fileList);
-  }
+  // =========================
+  // ⚡ AUTO UPDATE SYSTEM
+  // =========================
 
-  // ✏️ SAFE RENAME
-  async function renameFile() {
-    if (!currentFile || !dirHandle) return;
+  let CURRENT_VERSION = "1.0.0";
 
-    const base = renameBox.value.trim();
-    if (!base) return;
+  async function checkUpdate() {
+    try {
+      const res = await fetch("./version.json");
+      const data = await res.json();
 
-    const ext = "." + currentName.split(".").pop();
-    const newName = base + ext;
-
-    const newHandle = await dirHandle.getFileHandle(newName, {
-      create: true
-    });
-
-    const writable = await newHandle.createWritable();
-    await writable.write(currentBlob);
-    await writable.close();
-
-    currentFile = newHandle;
-    currentName = newName;
-
-    await refresh();
-  }
-
-  // 🗑️ DELETE
-  async function deleteFile() {
-    if (!currentFile) return;
-
-    lastDeleted = {
-      name: currentName,
-      blob: currentBlob
-    };
-
-    await dirHandle.removeEntry(currentName);
-
-    currentFile = null;
-    img.src = "";
-
-    await refresh();
-  }
-
-  // ↩️ UNDO
-  async function undoDelete() {
-    if (!lastDeleted) return;
-
-    const newHandle = await dirHandle.getFileHandle(lastDeleted.name, {
-      create: true
-    });
-
-    const writable = await newHandle.createWritable();
-    await writable.write(lastDeleted.blob);
-    await writable.close();
-
-    lastDeleted = null;
-    await refresh();
-  }
-
-  // 🔍 SEARCH
-  search.addEventListener("input", () => {
-    const val = search.value.toLowerCase();
-    document.querySelectorAll(".file").forEach(el => {
-      el.style.display =
-        el.textContent.toLowerCase().includes(val) ? "flex" : "none";
-    });
-  });
-
-  // 📦 DRAG & DROP IMPORT
-  document.addEventListener("drop", async (e) => {
-    e.preventDefault();
-    if (!dirHandle) return;
-
-    for (const file of e.dataTransfer.files) {
-      if (!isImage(file.name)) continue;
-
-      const handle = await dirHandle.getFileHandle(file.name, {
-        create: true
-      });
-
-      const writable = await handle.createWritable();
-      await writable.write(file);
-      await writable.close();
+      if (data.version !== CURRENT_VERSION) {
+        alert("Update found! Reloading...");
+        location.reload();
+      } else {
+        alert("You're up to date ✔");
+      }
+    } catch {
+      alert("No version file found");
     }
+  }
 
-    await refresh();
-  });
+  // =========================
+  // 📱 PWA SERVICE WORKER
+  // =========================
 
-  document.addEventListener("dragover", e => e.preventDefault());
-
-  // ⚡ PWA SERVICE WORKER
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js");
   }
+
+  // auto reload on SW update
+  navigator.serviceWorker?.addEventListener("controllerchange", () => {
+    location.reload();
+  });
 
 </script>
 
